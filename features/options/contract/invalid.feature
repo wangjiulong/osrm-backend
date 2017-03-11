@@ -1,4 +1,4 @@
-@prepare @options @invalid
+@contract @options @invalid
 Feature: osrm-contract command line options: invalid options
 
     Background:
