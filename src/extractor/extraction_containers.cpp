@@ -641,12 +641,12 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
         {
             if (!restriction_container.restriction.condition.empty())
             {
-                // TODO restrictions serialization does not work; InputRestrictionContainer type
-                // requires a custom serialization function
                 // write conditional turn restrictions to disk, for use in contractor later
-                restrictions_out_file.WriteOne(restriction_container.restriction);
+                SerializeRestriction(restrictions_out_file, restriction_container);
                 ++written_restriction_count;
-            } else {
+            }
+            else
+            {
                 // save unconditional turn restriction to memory, for use in ebg later
                 unconditional_turn_restrictions.push_back(restriction_container.restriction);
             }
@@ -655,6 +655,19 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
     restrictions_out_file.SkipToBeginning();
     restrictions_out_file.WriteElementCount32(written_restriction_count);
     util::Log() << "usable restrictions: " << written_restriction_count;
+}
+
+void ExtractionContainers::SerializeRestriction(storage::io::FileWriter &writer,
+                                                const InputRestrictionContainer &container)
+{
+    writer.WriteOne(container.restriction.via);
+    writer.WriteOne(container.restriction.from);
+    writer.WriteOne(container.restriction.to);
+    writer.WriteOne(container.restriction.flags.is_only);
+    // condition is a string
+    auto len = static_cast<std::uint64_t>(container.restriction.condition.size());
+    writer.WriteOne(len);
+    writer.WriteFrom(container.restriction.condition, len);
 }
 
 void ExtractionContainers::PrepareRestrictions()

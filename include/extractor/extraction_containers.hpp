@@ -40,9 +40,10 @@ class ExtractionContainers
     void PrepareEdges(ScriptingEnvironment &scripting_environment);
 
     void WriteNodes(storage::io::FileWriter &file_out) const;
-    void WriteRestrictions(const std::string &restrictions_file_name) const;
+    void WriteRestrictions(const std::string &restrictions_file_name);
     void WriteEdges(storage::io::FileWriter &file_out) const;
     void WriteCharData(const std::string &file_name);
+    void SerializeRestriction(storage::io::FileWriter &writer, const InputRestrictionContainer &container);
 
   public:
     using STXXLNodeIDVector = stxxl::vector<OSMNodeID>;
