@@ -289,6 +289,13 @@ class FileWriter
         WriteFrom(src.data(), src.size());
     }
 
+    void WriteFrom(const std::string &src)
+    {
+        auto len = static_cast<std::uint64_t>(src.size());
+        WriteOne(len);
+        WriteFrom(src.data(), len);
+    }
+
     template <typename T> void WriteFrom(const T &src) { WriteFrom(&src, 1); }
 
     template <typename T> void WriteOne(const T tmp) { WriteFrom(tmp); }

@@ -665,9 +665,7 @@ void ExtractionContainers::SerializeRestriction(storage::io::FileWriter &writer,
     writer.WriteOne(container.restriction.to);
     writer.WriteOne(container.restriction.flags.is_only);
     // condition is a string
-    auto len = static_cast<std::uint64_t>(container.restriction.condition.size());
-    writer.WriteOne(len);
-    writer.WriteFrom(container.restriction.condition, len);
+    writer.WriteFrom(container.restriction.condition);
 }
 
 void ExtractionContainers::PrepareRestrictions()
