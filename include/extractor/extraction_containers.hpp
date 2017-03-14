@@ -43,7 +43,6 @@ class ExtractionContainers
     void WriteRestrictions(const std::string &restrictions_file_name);
     void WriteEdges(storage::io::FileWriter &file_out) const;
     void WriteCharData(const std::string &file_name);
-    void SerializeRestriction(storage::io::FileWriter &writer, const InputRestrictionContainer &container);
 
   public:
     using STXXLNodeIDVector = stxxl::vector<OSMNodeID>;

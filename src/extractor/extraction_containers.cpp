@@ -1,6 +1,8 @@
 #include "extractor/extraction_containers.hpp"
 #include "extractor/extraction_segment.hpp"
 #include "extractor/extraction_way.hpp"
+#include "extractor/restriction.hpp"
+#include "extractor/io.hpp"
 
 #include "util/coordinate_calculation.hpp"
 
@@ -642,7 +644,7 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
             if (!restriction_container.restriction.condition.empty())
             {
                 // write conditional turn restrictions to disk, for use in contractor later
-                SerializeRestriction(restrictions_out_file, restriction_container);
+                io::write(restrictions_out_file, restriction_container);
                 ++written_restriction_count;
             }
             else
@@ -655,17 +657,6 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
     restrictions_out_file.SkipToBeginning();
     restrictions_out_file.WriteElementCount32(written_restriction_count);
     util::Log() << "usable restrictions: " << written_restriction_count;
-}
-
-void ExtractionContainers::SerializeRestriction(storage::io::FileWriter &writer,
-                                                const InputRestrictionContainer &container)
-{
-    writer.WriteOne(container.restriction.via);
-    writer.WriteOne(container.restriction.from);
-    writer.WriteOne(container.restriction.to);
-    writer.WriteOne(container.restriction.flags.is_only);
-    // condition is a string
-    writer.WriteFrom(container.restriction.condition);
 }
 
 void ExtractionContainers::PrepareRestrictions()
