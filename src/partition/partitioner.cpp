@@ -168,36 +168,38 @@ int Partitioner::Run(const PartitionConfig &config)
         const auto forward_node = entry.forward_ebg_node;
         const auto backward_node = entry.backward_ebg_node;
 
-        auto const pick_best_partitio_id = [&](const NodeID ebg_node) {
+        if (edge_based_partition_ids[forward_node] == SPECIAL_NODEID)
+        {
+            BOOST_ASSERT(backward_node == SPECIAL_NODEID ||
+                         edge_based_partition_ids[backward_node] == SPECIAL_NODEID);
+            // Border nodes u,v - need to be resolved.
+            // FIXME: just pick one side for now. See #3205.
+
             std::size_t u_border_edges = 0;
             std::size_t v_border_edges = 0;
 
-            for (auto edge : edge_based_graph->GetAdjacentEdgeRange(ebg_node))
-            {
-                auto target = edge_based_graph->GetTarget(edge);
-                if (edge_based_partition_ids[target] != node_based_partition_ids[u])
-                    u_border_edges++;
-                if (edge_based_partition_ids[target] != node_based_partition_ids[v])
-                    v_border_edges++;
-                // note: the target node can be neither in u or v's partition
-            }
+            const auto count_border_egdes = [&](NodeID ebg_node) {
+                for (auto edge : edge_based_graph->GetAdjacentEdgeRange(ebg_node))
+                {
+                    auto target = edge_based_graph->GetTarget(edge);
+                    if (edge_based_partition_ids[target] != node_based_partition_ids[u])
+                        u_border_edges++;
+                    if (edge_based_partition_ids[target] != node_based_partition_ids[v])
+                        v_border_edges++;
+                    // note: the target node can be neither in u or v's partition
+                }
+            };
+
+            count_border_egdes(forward_node);
+            if (backward_node != SPECIAL_NODEID)
+                count_border_egdes(backward_node);
 
             bool use_u = u_border_edges < v_border_edges;
 
             // Use partition that introduce less cross cell connections
-            return node_based_partition_ids[use_u ? u : v];
-        };
-
-        if (edge_based_partition_ids[forward_node] == SPECIAL_NODEID)
-        {
-            BOOST_ASSERT(forward_node != SPECIAL_NODEID);
-            edge_based_partition_ids[forward_node] = pick_best_partitio_id(forward_node);
-        }
-        if (backward_node != SPECIAL_NODEID &&
-            edge_based_partition_ids[backward_node] == SPECIAL_NODEID)
-        {
-            BOOST_ASSERT(forward_node != SPECIAL_NODEID);
-            edge_based_partition_ids[backward_node] = pick_best_partitio_id(backward_node);
+            edge_based_partition_ids[forward_node] = node_based_partition_ids[use_u ? u : v];
+            if (backward_node != SPECIAL_NODEID)
+                edge_based_partition_ids[backward_node] = node_based_partition_ids[use_u ? u : v];
         }
 
         // after this we have resolved all nodes
