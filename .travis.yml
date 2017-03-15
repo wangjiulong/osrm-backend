@@ -213,3 +213,9 @@ after_success:
     if [ -n "${ENABLE_COVERAGE}" ]; then
       bash <(curl -s https://codecov.io/bash)
     fi
+
+  - |
+    nvm install 4
+    nvm use 4
+    source ./scripts/build.sh
+    ./scripts/travis/publish.sh
