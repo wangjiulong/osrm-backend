@@ -217,102 +217,75 @@ int Partitioner::Run(const PartitionConfig &config)
                               config.minimum_cell_size * 32 * 16,
                               config.minimum_cell_size * 32 * 16 * 32});
 
-    auto num_fixed_unconnected = 0;
     auto num_unconnected = 0;
-    for (int level_index = partitions.size()-1; level_index >= 0; level_index--)
+    for (int level_index = partitions.size() - 1; level_index >= 0; level_index--)
     {
-        std::vector<std::tuple<CellID, NodeID>> forward_witnesses;
-        std::vector<std::tuple<CellID, NodeID>> backward_witnesses;
-        for (const auto &entry : mapping)
+        struct Witness
         {
-            forward_witnesses.clear();
-            backward_witnesses.clear();
+            NodeID id;
+            std::size_t induced_border_edges;
+        };
+        std::vector<Witness> witnesses;
+        for (NodeID node = 0; node < edge_based_graph->GetNumberOfNodes(); ++node)
+        {
+            witnesses.clear();
 
-            bool forward_is_source = false;
-            bool forward_is_target = false;
-            bool backward_is_source = false;
-            bool backward_is_target = false;
+            bool is_source = false;
+            bool is_target = false;
 
-            const auto find_witnesses =
-                [&](const NodeID node, bool &is_source, bool &is_target, auto &witnesses) {
-                    const auto cell_id = partitions[level_index][node];
+            const auto cell_id = partitions[level_index][node];
+            for (auto edge : edge_based_graph->GetAdjacentEdgeRange(node))
+            {
+                const auto data = edge_based_graph->GetEdgeData(edge);
+                const auto target = edge_based_graph->GetTarget(edge);
+                const auto target_cell_id = partitions[level_index][target];
+                if (target_cell_id == cell_id)
+                {
+                    is_source |= data.forward;
+                    is_target |= data.backward;
+                }
+                else
+                {
+                    witnesses.push_back({target, 0});
+                }
+            }
+
+            const auto unconnected = witnesses.size() > 0 && !is_source && !is_target;
+
+            if (unconnected)
+            {
+                num_unconnected++;
+                for (auto &witness : witnesses)
+                {
                     for (auto edge : edge_based_graph->GetAdjacentEdgeRange(node))
                     {
-                        const auto data = edge_based_graph->GetEdgeData(edge);
-                        const auto target = edge_based_graph->GetTarget(edge);
-                        const auto target_cell_id = partitions[level_index][target];
-                        if (target_cell_id == cell_id)
+                        auto target = edge_based_graph->GetTarget(edge);
+                        for (auto sublevel_index = level_index; sublevel_index >= 0;
+                             --sublevel_index)
                         {
-                            is_source |= data.forward;
-                            is_target |= data.backward;
+                            if (partitions[sublevel_index][target] !=
+                                partitions[sublevel_index][witness.id])
+                                witness.induced_border_edges++;
                         }
-                        else
-                        {
-                            witnesses.push_back(std::make_tuple(target_cell_id, target));
-                        }
-                    }
-                };
-
-            find_witnesses(
-                entry.forward_ebg_node, forward_is_source, forward_is_target, forward_witnesses);
-            const auto forward_unconnected =
-                forward_witnesses.size() > 0 && !forward_is_source && !forward_is_target;
-
-            if (entry.backward_ebg_node != SPECIAL_NODEID)
-            {
-                find_witnesses(entry.backward_ebg_node,
-                               backward_is_source,
-                               backward_is_target,
-                               backward_witnesses);
-            }
-            const auto backward_unconnected =
-                backward_witnesses.size() > 0 && !backward_is_source && !backward_is_target;
-
-            if (forward_unconnected)
-                num_unconnected++;
-
-            if (backward_unconnected)
-                num_unconnected++;
-
-            if (forward_unconnected && entry.backward_ebg_node == SPECIAL_NODEID)
-            {
-                num_fixed_unconnected++;
-
-                // FIXME actually fix
-            }
-            else if (forward_unconnected && backward_unconnected && entry.backward_ebg_node != SPECIAL_NODEID)
-            {
-
-                // both nodes are unconnected to the cell in which they are contained
-                if (forward_unconnected && backward_unconnected)
-                {
-                    // we need to find a witness that puts both forward and
-                    // backward node in the same cell
-                    std::sort(forward_witnesses.begin(), forward_witnesses.end());
-                    std::sort(backward_witnesses.begin(), backward_witnesses.end());
-
-                    decltype(forward_witnesses) merged_witnesses;
-                    std::set_intersection(forward_witnesses.begin(),
-                                          forward_witnesses.end(),
-                                          backward_witnesses.begin(),
-                                          backward_witnesses.end(),
-                                          std::back_inserter(merged_witnesses),
-                                          [](const auto &lhs, const auto &rhs) {
-                                              return std::get<0>(lhs) < std::get<0>(rhs);
-                                          });
-
-                    if (merged_witnesses.size() > 0)
-                    {
-                        num_fixed_unconnected += 2;
                     }
                 }
-                // FIXME actually fix
+
+                auto best_witness = std::min_element(
+                    witnesses.begin(), witnesses.end(), [](const auto &lhs, const auto &rhs) {
+                        return lhs.induced_border_edges < rhs.induced_border_edges;
+                    });
+                BOOST_ASSERT(best_witness != witnesses.end());
+
+                // assign `node` to same subcells as `best_witness`
+                for (auto sublevel_index = level_index; sublevel_index >= 0; --sublevel_index)
+                {
+                    partitions[sublevel_index][node] = partitions[sublevel_index][best_witness->id];
+                }
             }
         }
     }
 
-    util::Log() << "Fixed " << num_fixed_unconnected << " out of " << num_unconnected
-                << " unconnected nodes";
+    util::Log() << "Fixed " << num_unconnected << " unconnected nodes";
 
     util::Log() << "Edge-based-graph annotation:";
     for (std::size_t level = 0; level < level_to_num_cells.size(); ++level)
