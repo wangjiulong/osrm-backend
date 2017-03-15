@@ -6,8 +6,9 @@
 #include "partition/edge_based_graph_reader.hpp"
 #include "partition/io.hpp"
 #include "partition/multi_level_partition.hpp"
-#include "partition/node_based_graph_to_edge_based_graph_mapping_reader.hpp"
 #include "partition/recursive_bisection.hpp"
+
+#include "extractor/io.hpp"
 
 #include "util/coordinate.hpp"
 #include "util/geojson_debug_logger.hpp"
@@ -123,7 +124,8 @@ int Partitioner::Run(const PartitionConfig &config)
     // Then loads the edge based graph tanslates the partition and modifies it.
     // For details see #3205
 
-    auto mapping = LoadNodeBasedGraphToEdgeBasedGraphMapping(config.cnbg_ebg_mapping_path.string());
+    std::vector<extractor::NBGToEBG> mapping;
+    extractor::io::read(config.cnbg_ebg_mapping_path.string(), mapping);
     util::Log() << "Loaded node based graph to edge based graph mapping";
 
     auto edge_based_graph = LoadEdgeBasedGraph(config.edge_based_graph_path.string());
@@ -137,61 +139,73 @@ int Partitioner::Run(const PartitionConfig &config)
     const auto &node_based_partition_ids = recursive_bisection.BisectionIDs();
 
     // Partition ids, keyed by edge based graph nodes
-    std::vector<NodeID> edge_based_partition_ids(edge_based_graph->GetNumberOfNodes());
+    std::vector<NodeID> edge_based_partition_ids(edge_based_graph->GetNumberOfNodes(),
+                                                 SPECIAL_NODEID);
 
-    // Extract edge based border nodes, based on node based partition and mapping.
-    for (const auto node : util::irange(0u, edge_based_graph->GetNumberOfNodes()))
+    // Only resolve all easy cases in the first pass
+    for (const auto &entry : mapping)
     {
-        const auto node_based_nodes = mapping.Lookup(node);
-
-        const auto u = node_based_nodes.u;
-        const auto v = node_based_nodes.v;
+        const auto u = entry.u;
+        const auto v = entry.v;
+        const auto forward_node = entry.forward_ebg_node;
+        const auto backward_node = entry.backward_ebg_node;
 
         if (node_based_partition_ids[u] == node_based_partition_ids[v])
         {
             // Can use partition_ids[u/v] as partition for edge based graph `node_id`
-            edge_based_partition_ids[node] = node_based_partition_ids[u];
-
-            auto edges = edge_based_graph->GetAdjacentEdgeRange(node);
-            if (edges.size() == 1)
-            { // Check the edge case with one adjacent edge-based backward edge
-                auto edge = edges.front();
-                auto other = edge_based_graph->GetTarget(edge);
-                auto &data = edge_based_graph->GetEdgeData(edge);
-                auto other_node_based_nodes = mapping.Lookup(other);
-                if (data.backward &&
-                    node_based_partition_ids[other_node_based_nodes.u] !=
-                        node_based_partition_ids[u])
-                { // use id of other node if the edge [other_u, other_v] -> [u,v] is a single edge
-                    // and nodes other_[u,v] are in  different node-based partitions
-                    edge_based_partition_ids[node] =
-                        node_based_partition_ids[other_node_based_nodes.u];
-                }
-            }
+            edge_based_partition_ids[forward_node] = node_based_partition_ids[u];
+            if (backward_node != SPECIAL_NODEID)
+                edge_based_partition_ids[backward_node] = node_based_partition_ids[u];
         }
-        else
+    }
+
+    // Heuristic: Pick the bisection ID of u or v depending on how many border vertexes
+    // it would induce, given the current (partital) assignment
+    for (const auto &entry : mapping)
+    {
+        const auto u = entry.u;
+        const auto v = entry.v;
+        const auto forward_node = entry.forward_ebg_node;
+        const auto backward_node = entry.backward_ebg_node;
+
+        if (edge_based_partition_ids[forward_node] == SPECIAL_NODEID)
         {
+            BOOST_ASSERT(backward_node == SPECIAL_NODEID ||
+                         edge_based_partition_ids[backward_node] == SPECIAL_NODEID);
             // Border nodes u,v - need to be resolved.
             // FIXME: just pick one side for now. See #3205.
 
-            bool use_u = false;
-            for (auto edge : edge_based_graph->GetAdjacentEdgeRange(node))
-            {
-                auto other = edge_based_graph->GetTarget(edge);
-                auto &data = edge_based_graph->GetEdgeData(edge);
-                auto other_node_based_nodes = mapping.Lookup(other);
+            std::size_t u_border_edges = 0;
+            std::size_t v_border_edges = 0;
 
-                if (data.backward)
-                { // can use id of u if [other_u, other_v] -> [u,v] is in the same partition as u
-                    BOOST_ASSERT(u == other_node_based_nodes.v);
-                    use_u |= node_based_partition_ids[u] ==
-                             node_based_partition_ids[other_node_based_nodes.u];
+            const auto count_border_egdes = [&](NodeID ebg_node) {
+                for (auto edge : edge_based_graph->GetAdjacentEdgeRange(ebg_node))
+                {
+                    auto target = edge_based_graph->GetTarget(edge);
+                    if (edge_based_partition_ids[target] != node_based_partition_ids[u])
+                        u_border_edges++;
+                    if (edge_based_partition_ids[target] != node_based_partition_ids[v])
+                        v_border_edges++;
+                    // note: the target node can be neither in u or v's partition
                 }
-            }
+            };
+
+            count_border_egdes(forward_node);
+            if (backward_node != SPECIAL_NODEID)
+                count_border_egdes(backward_node);
+
+            bool use_u = u_border_edges < v_border_edges;
 
             // Use partition that introduce less cross cell connections
-            edge_based_partition_ids[node] = node_based_partition_ids[use_u ? u : v];
+            edge_based_partition_ids[forward_node] = node_based_partition_ids[use_u ? u : v];
+            if (backward_node != SPECIAL_NODEID)
+                edge_based_partition_ids[backward_node] = node_based_partition_ids[use_u ? u : v];
         }
+
+        // after this we have resolved all nodes
+        BOOST_ASSERT(edge_based_partition_ids[forward_node] != SPECIAL_NODEID);
+        BOOST_ASSERT(backward_node == SPECIAL_NODEID ||
+                     edge_based_partition_ids[backward_node] != SPECIAL_NODEID);
     }
 
     std::vector<Partition> partitions;
@@ -202,6 +216,108 @@ int Partitioner::Run(const PartitionConfig &config)
                               config.minimum_cell_size * 32,
                               config.minimum_cell_size * 32 * 16,
                               config.minimum_cell_size * 32 * 16 * 32});
+
+    auto num_fixed_unconnected = 0;
+    auto num_unconnected = 0;
+    for (int level_index = partitions.size(); level_index >= 0; level_index--)
+    {
+        std::vector<std::tuple<CellID, NodeID>> forward_witnesses;
+        std::vector<std::tuple<CellID, NodeID>> backward_witnesses;
+        for (const auto &entry : mapping)
+        {
+            forward_witnesses.clear();
+            backward_witnesses.clear();
+
+            bool forward_is_source = false;
+            bool forward_is_target = false;
+            bool backward_is_source = false;
+            bool backward_is_target = false;
+
+            const auto find_witnesses =
+                [&](const NodeID node, bool &is_source, bool &is_target, auto &witnesses) {
+                    const auto cell_id = partitions[level_index][node];
+                    for (auto edge : edge_based_graph->GetAdjacentEdgeRange(node))
+                    {
+                        const auto data = edge_based_graph->GetEdgeData(edge);
+                        const auto target = edge_based_graph->GetTarget(edge);
+                        const auto target_cell_id = partitions[level_index][target];
+                        if (target_cell_id == cell_id)
+                        {
+                            is_source |= data.forward;
+                            is_target |= data.backward;
+                        }
+                        else
+                        {
+                            witnesses.push_back(std::make_tuple(target_cell_id, target));
+                        }
+                    }
+                };
+
+            find_witnesses(
+                entry.forward_ebg_node, forward_is_source, forward_is_target, forward_witnesses);
+            const auto forward_unconnected =
+                forward_witnesses.size() > 0 && !forward_is_source && !forward_is_target;
+
+            if (forward_witnesses.size() > 0)
+            {
+                std::cout << entry.forward_ebg_node << ":" << std::endl;
+                for (auto w : forward_witnesses)
+                    std::cout << std::get<0>(w) << " ";
+                std::cout << std::endl;
+            }
+
+            if (entry.backward_ebg_node != SPECIAL_NODEID)
+            {
+                find_witnesses(entry.backward_ebg_node,
+                               backward_is_source,
+                               backward_is_target,
+                               backward_witnesses);
+            }
+            const auto backward_unconnected =
+                backward_witnesses.size() > 0 && !backward_is_source && !backward_is_target;
+
+            if (forward_unconnected && entry.backward_ebg_node == SPECIAL_NODEID)
+            {
+                num_unconnected++;
+                num_fixed_unconnected++;
+
+                // FIXME actually fix
+            }
+            else if (forward_unconnected && backward_unconnected && entry.backward_ebg_node != SPECIAL_NODEID)
+            {
+
+                // both nodes are unconnected to the cell in which they are contained
+                if (forward_unconnected && backward_unconnected)
+                {
+                    // we need to find a witness that puts both forward and
+                    // backward node in the same cell
+                    std::sort(forward_witnesses.begin(), forward_witnesses.end());
+                    std::sort(backward_witnesses.begin(), backward_witnesses.end());
+
+                    decltype(forward_witnesses) merged_witnesses;
+                    std::set_intersection(forward_witnesses.begin(),
+                                          forward_witnesses.end(),
+                                          backward_witnesses.begin(),
+                                          backward_witnesses.end(),
+                                          std::back_inserter(merged_witnesses),
+                                          [](const auto &lhs, const auto &rhs) {
+                                              return std::get<0>(lhs) < std::get<0>(rhs);
+                                          });
+
+                    if (merged_witnesses.size() > 0)
+                    {
+                        num_fixed_unconnected += 2;
+                    }
+                }
+
+                num_unconnected += 2;
+                // FIXME actually fix
+            }
+        }
+    }
+
+    util::Log() << "Fixed " << num_fixed_unconnected << " out of " << num_fixed_unconnected
+                << " unconnected nodes";
 
     util::Log() << "Edge-based-graph annotation:";
     for (std::size_t level = 0; level < level_to_num_cells.size(); ++level)
