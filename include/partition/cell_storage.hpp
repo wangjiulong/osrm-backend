@@ -240,6 +240,7 @@ template <bool UseShareMemory> class CellStorageImpl
                     if (!is_source_node && !is_destination_node)
                     {
                         number_of_unconneced++;
+                        util::Log(logDEBUG) << "Found unconnected boundary node " << node << " on level " << (int)level;
                         level_destination_boundary.emplace_back(cell_id, node);
                     }
                 }

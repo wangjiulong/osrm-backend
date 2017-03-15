@@ -219,7 +219,7 @@ int Partitioner::Run(const PartitionConfig &config)
 
     auto num_fixed_unconnected = 0;
     auto num_unconnected = 0;
-    for (int level_index = partitions.size(); level_index >= 0; level_index--)
+    for (int level_index = partitions.size()-1; level_index >= 0; level_index--)
     {
         std::vector<std::tuple<CellID, NodeID>> forward_witnesses;
         std::vector<std::tuple<CellID, NodeID>> backward_witnesses;
@@ -258,14 +258,6 @@ int Partitioner::Run(const PartitionConfig &config)
             const auto forward_unconnected =
                 forward_witnesses.size() > 0 && !forward_is_source && !forward_is_target;
 
-            if (forward_witnesses.size() > 0)
-            {
-                std::cout << entry.forward_ebg_node << ":" << std::endl;
-                for (auto w : forward_witnesses)
-                    std::cout << std::get<0>(w) << " ";
-                std::cout << std::endl;
-            }
-
             if (entry.backward_ebg_node != SPECIAL_NODEID)
             {
                 find_witnesses(entry.backward_ebg_node,
@@ -276,9 +268,14 @@ int Partitioner::Run(const PartitionConfig &config)
             const auto backward_unconnected =
                 backward_witnesses.size() > 0 && !backward_is_source && !backward_is_target;
 
+            if (forward_unconnected)
+                num_unconnected++;
+
+            if (backward_unconnected)
+                num_unconnected++;
+
             if (forward_unconnected && entry.backward_ebg_node == SPECIAL_NODEID)
             {
-                num_unconnected++;
                 num_fixed_unconnected++;
 
                 // FIXME actually fix
@@ -309,14 +306,12 @@ int Partitioner::Run(const PartitionConfig &config)
                         num_fixed_unconnected += 2;
                     }
                 }
-
-                num_unconnected += 2;
                 // FIXME actually fix
             }
         }
     }
 
-    util::Log() << "Fixed " << num_fixed_unconnected << " out of " << num_fixed_unconnected
+    util::Log() << "Fixed " << num_fixed_unconnected << " out of " << num_unconnected
                 << " unconnected nodes";
 
     util::Log() << "Edge-based-graph annotation:";
